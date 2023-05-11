@@ -51,6 +51,7 @@
 #include <flatland_server/debug_visualization.h>
 #include <flatland_server/timekeeper.h>
 #include <flatland_server/world.h>
+#include <std_srvs/Empty.h>
 #include <string>
 
 namespace flatland_server {
@@ -64,6 +65,9 @@ class SimulationManager {
   bool show_viz_;                ///< flag to determine if to show visualization
   double viz_pub_rate_;          ///< rate to publish visualization
   std::string world_yaml_file_;  ///< path to the world file
+
+  Timekeeper timekeeper;
+  ros::ServiceServer step_world_srv;
 
   /**
    * @name  Simulation Manager constructor
@@ -86,6 +90,14 @@ class SimulationManager {
    * Kill the world
    */
   void Shutdown();
+
+	/**
+   * Update the world
+  */
+  bool StepWorld(
+    std_srvs::Empty::Request &request,
+    std_srvs::Empty::Response &response 
+  );
 };
 };      // namespace flatland_server
 #endif  // FLATLAND_SERVER_SIMULATION_MANAGER_H

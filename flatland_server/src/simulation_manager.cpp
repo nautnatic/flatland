@@ -45,12 +45,15 @@
  */
 
 #include "flatland_server/simulation_manager.h"
+
 #include <flatland_server/debug_visualization.h>
 #include <flatland_server/layer.h>
 #include <flatland_server/model.h>
 #include <flatland_server/service_manager.h>
 #include <flatland_server/world.h>
 #include <ros/ros.h>
+#include <std_srvs/Empty.h>
+
 #include <exception>
 #include <limits>
 #include <string>
@@ -71,11 +74,14 @@ SimulationManager::SimulationManager(std::string world_yaml_file,
                  "step_size(%f) show_viz(%s), viz_pub_rate(%f)",
                  world_yaml_file_.c_str(), update_rate_, step_size_,
                  show_viz_ ? "true" : "false", viz_pub_rate_);
+  timekeeper.SetMaxStepSize(step_size_);
 }
 
 void SimulationManager::Main() {
   ROS_INFO_NAMED("SimMan", "Initializing...");
   run_simulator_ = true;
+  int pre_run_steps = fmin(5 / step_size_, 1000);
+  ros::WallRate rate(update_rate_);
 
   try {
     world_ = World::MakeWorld(world_yaml_file_);
@@ -93,11 +99,12 @@ void SimulationManager::Main() {
   double max_cycle_util = 0;
   double viz_update_period = 1.0f / viz_pub_rate_;
   ServiceManager service_manager(this, world_);
-  Timekeeper timekeeper;
 
-  ros::WallRate rate(update_rate_);
-  timekeeper.SetMaxStepSize(step_size_);
-  ROS_INFO_NAMED("SimMan", "Simulation loop started");
+  // expose step_world service and update world, if the service is called
+  ros::NodeHandle n;
+  
+  step_world_srv =
+      n.advertiseService("/step_world", &SimulationManager::StepWorld, this);
 
   while (ros::ok() && run_simulator_) {
     // for updating visualization at a given rate
@@ -112,7 +119,10 @@ void SimulationManager::Main() {
     }
     bool update_viz = ((f >= 0.0) && (f < rate.expectedCycleTime().toSec()));
 
-    world_->Update(timekeeper);  // Step physics by ros cycle time
+    if (pre_run_steps > 0) {
+      world_->Update(timekeeper);
+      pre_run_steps = fmax(--pre_run_steps, 0);
+    }
 
     if (show_viz_ && update_viz) {
       world_->DebugVisualize(false);  // no need to update layer
@@ -122,30 +132,23 @@ void SimulationManager::Main() {
 
     ros::spinOnce();
     rate.sleep();
-
-    iterations++;
-
-    double cycle_time = rate.cycleTime().toSec() * 1000;
-    double expected_cycle_time = rate.expectedCycleTime().toSec() * 1000;
-    double cycle_util = cycle_time / expected_cycle_time * 100;  // in percent
-    double factor = timekeeper.GetStepSize() * 1000 / expected_cycle_time;
-    min_cycle_util = std::min(cycle_util, min_cycle_util);
-    if (iterations > 10) max_cycle_util = std::max(cycle_util, max_cycle_util);
-    filtered_cycle_util = 0.99 * filtered_cycle_util + 0.01 * cycle_util;
-
-    ROS_INFO_THROTTLE_NAMED(
-        1, "SimMan",
-        "utilization: min %.1f%% max %.1f%% ave %.1f%%  factor: %.1f",
-        min_cycle_util, max_cycle_util, filtered_cycle_util, factor);
   }
-  ROS_INFO_NAMED("SimMan", "Simulation loop ended");
 
+  ROS_INFO_NAMED("SimMan", "Simulation loop ended");
   delete world_;
 }
 
 void SimulationManager::Shutdown() {
   ROS_INFO_NAMED("SimMan", "Shutdown called");
   run_simulator_ = false;
+}
+
+bool SimulationManager::StepWorld(std_srvs::Empty::Request& request,
+                                  std_srvs::Empty::Response& response) {
+  ROS_INFO("STEP WORLD");
+  world_->Update(timekeeper);  // Step physics by ros cycle time
+  ROS_INFO("STEP WORLD END");
+  return true;
 }
 
 };  // namespace flatland_server
